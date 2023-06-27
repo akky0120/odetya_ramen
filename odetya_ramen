@@ -1,0 +1,55 @@
+with table1 as (
+select
+hashed_adid,date(a.sdk_detect_ptime , 'Asia/Tokyo') as date,geopoint,longitude,latitude
+from
+  `prd-analysis.master_v.sdk_master_table_bq` as a -- 名前をつけておく
+where
+  date(a.sdk_detect_ptime , 'Asia/Tokyo') between "2022-11-25" and "2022-12-05" -- timestampはUTC(イギリス時刻)になっているのでtokyoの時刻に変更しよう
+  and 
+  log_type in ('location') -- GPSデータだけにしぼるおまじない
+  and 
+  os = "android"
+  and
+  accuracy<=100
+  and
+  hashed_adid is not null
+)
+,
+lead_table as(
+select
+    *
+    , lead(t1.geopoint) over(partition by t1.hashed_adid , date order by date) as lead_mesh_geopoint
+  from
+    table1 as t1
+)
+,
+stay_table as(
+select
+*,
+case 
+    when (ST_COVERS(ST_Buffer(ST_GEOGPOINT(133.21493408312628,33.55414821714613),500), le.geopoint) and
+    ST_COVERS(ST_Buffer(ST_GEOGPOINT(133.21493408312628,33.55414821714613),500), le.lead_mesh_geopoint)) then 1
+    else 0
+    end as visit_cnt
+from
+lead_table as le
+)
+,
+stay_table2 as (
+select
+hashed_adid,date,
+case 
+    when sum(visit_cnt) >=1 then 1
+    else 0
+    end as visit_flg
+from
+stay_table
+group by 
+hashed_adid,date
+)
+select
+date,sum(visit_flg) as visit_user_cnt
+from
+stay_table2
+group by date
+order by date
